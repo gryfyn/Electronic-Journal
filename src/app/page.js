@@ -1,113 +1,429 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useEffect, useState, useRef } from 'react';
+import StickyNotes from './StickyNotes';
+import AddMeeting from './AddMeeting';
+import AddTask from './AddTask'; 
+import MoodLogger from './MoodLogger';
+import { FaChevronLeft, FaChevronRight } from 'react-icons/fa';
+
+
+
+// Utility function to format date and time
+const formatDateTime = () => {
+  const now = new Date();
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayName = days[now.getDay()];
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  const month = monthNames[now.getMonth()];
+  const day = now.getDate();
+  const year = now.getFullYear();
+  const hours = now.getHours() % 12 || 12;
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const ampm = now.getHours() >= 12 ? 'PM' : 'AM';
+
+  return {
+    date: `${dayName} ${day} ${month}, ${year}`,
+    time: `${hours}:${minutes} ${ampm}`,
+    today: `${year}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  };
+};
+
+// Utility function to generate Tailwind CSS classes dynamically
+const tw = (classes) => classes.join(' ');
+
+
+const prompts = [
+  "How are you feeling today?",
+  "What's the best thing that happened to you today?",
+  "What's one thing you're grateful for today?",
+  "What's something new you learned today?",
+  "What's a challenge you faced today and how did you overcome it?",
+  "What's something you're looking forward to tomorrow?",
+  "Describe your day in three words.",
+  "What's one thing you'd like to improve about yourself?",
+  "What made you smile today?",
+  "If you could change one thing about today, what would it be?"
+];
+
+const getRandomPrompt = () => {
+  const randomIndex = Math.floor(Math.random() * prompts.length);
+  return prompts[randomIndex];
+};
+
+
+const Home = () => {
+  const [entries, setEntries] = useState([]);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [dateTime, setDateTime] = useState(formatDateTime());
+  const [activeView, setActiveView] = useState('home');
+  const sidebarRef = useRef(null);
+  const mainContentRef = useRef(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [dailyPrompt, setDailyPrompt] = useState('');
+  const [mood, setMood] = useState(3);
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/entries')
+      .then((response) => response.json())
+      .then((data) => setEntries(data));
+
+    // Update date and time every minute
+    const interval = setInterval(() => {
+      setDateTime(formatDateTime());
+    }, 60000);
+
+        // Set a new prompt each day
+    const storedDate = localStorage.getItem('promptDate');
+    const currentDate = new Date().toDateString();
+    if (storedDate !== currentDate) {
+      const newPrompt = getRandomPrompt();
+      setDailyPrompt(newPrompt);
+      localStorage.setItem('promptDate', currentDate);
+      localStorage.setItem('dailyPrompt', newPrompt);
+    } else {
+         setDailyPrompt(localStorage.getItem('dailyPrompt') || getRandomPrompt());
+        }
+  
+
+    // Clean up interval on unmount
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleAddEntry = async (e) => {
+    e.preventDefault();
+    if (!title || !content) {
+      // Don't submit if title or content is empty
+      return;
+    }
+    const newEntry = { 
+      title, 
+      content, 
+      id: editingEntry ? editingEntry.id : Date.now().toString(), 
+      date: formatDateTime().today,
+      mood,
+      prompt: dailyPrompt
+    };
+
+    if (editingEntry) {
+      await fetch('/api/entries', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntry),
+      });
+      setEntries(entries.map((entry) => (entry.id === newEntry.id ? newEntry : entry)));
+    } else {
+      await fetch('/api/entries', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntry),
+      });
+      setEntries([newEntry, ...entries]);
+    }
+
+    setTitle('');
+    setContent('');
+    setEditingEntry(null);
+    setMood(3);
+  };
+
+  const handleEditEntry = (entry) => {
+    setEditingEntry(entry);
+    setTitle(entry.title);
+    setContent(entry.content);
+    setMood(entry.mood || 3);
+  };
+
+  const handleDeleteEntry = async () => {
+    if (!editingEntry) return;
+
+    await fetch('/api/entries', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: editingEntry.id }),
+    });
+    setEntries(entries.filter((entry) => entry.id !== editingEntry.id));
+    setTitle('');
+    setContent('');
+    setEditingEntry(null);
+    setMood(3);
+  };
+
+  const startResizing = () => {
+    setIsResizing(true);
+  };
+
+  const stopResizing = () => {
+    setIsResizing(false);
+  };
+
+  const resize = (e) => {
+    if (isResizing) {
+      const minSidebarWidth = 200;
+      const maxSidebarWidth = 600;
+      const minMainWidth = 600;
+
+      // Calculate new sidebar width and constrain it
+      const newSidebarWidth = Math.min(
+        Math.max(minSidebarWidth, e.clientX),
+        maxSidebarWidth
+      );
+
+      // Apply constraints to sidebar and main content
+      sidebarRef.current.style.width = `${newSidebarWidth}px`;
+      mainContentRef.current.style.flex = `1 1 calc(100% - ${newSidebarWidth}px)`;
+
+      // Ensure main content width is not less than the minimum width
+      const currentMainWidth = window.innerWidth - newSidebarWidth;
+      if (currentMainWidth < minMainWidth) {
+        sidebarRef.current.style.width = `${window.innerWidth - minMainWidth}px`;
+        mainContentRef.current.style.flex = `1 1 ${minMainWidth}px`;
+      }
+    }
+  };
+
+  useEffect(() => {
+    window.addEventListener('mousemove', resize);
+    window.addEventListener('mouseup', stopResizing);
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [isResizing]);
+
+
+  const toggleSidebar = () => {
+    setIsSidebarExpanded(!isSidebarExpanded);
+  };
+
+  // Separate entries into today and previous days
+  const todayDate = dateTime.today;
+  const todayEntries = entries.filter(entry => entry.date === todayDate).sort((a, b) => new Date(b.date) - new Date(a.date));
+  const previousEntries = entries.filter(entry => entry.date !== todayDate).sort((a, b) => new Date(b.date) - new Date(a.date));
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.js</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <div className="flex flex-col h-screen">
+      <header className={tw([ 'text-white', 'p-6'])} style={{backgroundColor: '#23B5D3'}}>
+        <div className={tw(['container', 'mx-auto', 'flex', 'justify-between'])}>
+          <h1 className={tw(['text-2xl', 'font-bold'])}>E-Notebook</h1>
+          <div className={tw(['text-right'])}>
+            <div>{dateTime.date}</div>
+            <div>{dateTime.time}</div>
+          </div>
         </div>
+      </header>
+      <div className={tw(['flex', 'justify-between', 'items-center', 'bg-blue-100', 'p-4'])}>
+        <div className="flex gap-2">
+          
+          <button
+            onClick={() => setActiveView('home')}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md"
+            style={{ color: 'black', fontWeight: 'bold', backgroundColor: '#007BFF', width: '140px' }}
+          >
+            Journal
+          </button>
+          <button
+            onClick={() => setActiveView('stickyNotes')}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md"
+            style={{ backgroundColor: '#66FF66', color: 'black', fontWeight: 'bold', width: '140px' }}
+          >
+            Sticky Notes
+          </button>
+          <button
+            onClick={() => setActiveView('addMeeting')}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md"
+            style={{ color: 'black', fontWeight: 'bold', backgroundColor: '#ED254E', width: '140px' }}
+          >
+            Add Meeting
+          </button>
+          <button
+            onClick={() => setActiveView('addTask')}
+            className="px-4 py-2 bg-blue-500 text-white rounded-md"
+            style={{ color: 'black', fontWeight: 'bold', backgroundColor: '#FBBF24', width: '140px' }}
+          >
+            Add Task
+          </button>
+        </div>
+        <h1 className="text-2xl font-bold">Hey, Griff</h1>
       </div>
+      
+      {activeView === 'stickyNotes' && <StickyNotes />}
+      {activeView === 'addMeeting' && <AddMeeting />}
+      {activeView === 'addTask' && <AddTask />}
+      {activeView === 'home' && (
+        <div className={tw(['flex', 'flex-grow', 'overflow-hidden'])}>
+        <aside
+            ref={sidebarRef}
+            className={tw([
+              'bg-gray-200',
+              'transition-all',
+              'duration-300',
+              'ease-in-out',
+              isSidebarExpanded ? 'w-1/4' : 'w-12',
+              'min-w-[48px]',
+              'max-w-[600px]',
+              'relative',
+            ])}
+          >
+            <div className={tw(['mb-4'])}>
+              <h3 className={tw(['text-xl', 'font-semibold', 'mb-2'])}>Today</h3>
+              <ul>
+                {todayEntries.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className={tw([
+                      'mb-2',
+                      'p-2',
+                      'cursor-pointer',
+                      'hover:bg-gray-300',
+                      'border-gray-300'
+                    ])}
+                    onClick={() => handleEditEntry(entry)}
+                  >
+                    <p className={tw(['text-sm', 'truncate'])}>{entry.content}</p>
+                    <p className={tw(['text-xs', 'text-gray-500'])}>{entry.date}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className={tw(['text-xl', 'font-semibold', 'mb-2'])}>Previous Entries</h3>
+              <ul>
+                {previousEntries.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className={tw([
+                      'mb-2',
+                      'p-2',
+                      'cursor-pointer',
+                      'hover:bg-gray-300',
+                      'border-gray-300'
+                    ])}
+                    onClick={() => handleEditEntry(entry)}
+                  >
+                    <p className={tw(['text-sm', 'truncate'])}>{entry.content}</p>
+                    <p className={tw(['text-xs', 'text-gray-500'])}>{entry.date}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div
+              className={tw([
+                'h-1',
+                'bg-gray-300',
+                'cursor-ew-resize',
+                'resize-x',
+                'resize-y'
+              ])}
+              onMouseDown={startResizing}
+            ></div>
+          </aside>
+          <main
+            ref={mainContentRef}
+            className={tw([
+              'bg-white',
+              'p-8',
+              'overflow-y-auto',
+              'flex-grow',
+              'transition-all',
+              'duration-300',
+              'ease-in-out',
+              isSidebarExpanded ? 'max-w-[calc(100%-200px)]' : 'max-w-[calc(100%-48px)]'
+            ])}
+          >
+            <div className={tw(['container', 'mx-auto'])}>
+              {activeView === 'home' && (
+                <form onSubmit={handleAddEntry}>
+                  <div className={tw([
+                    'mb-8',
+                    'p-6',
+                    'bg-gradient-to-r',
+                    'from-blue-100',
+                    'to-purple-100',
+                    'rounded-lg',
+                    'shadow-md',
+                    'border',
+                    'border-blue-200'
+                  ])}>
+                    <h2 className={tw([
+                      'text-2xl',
+                      'font-bold',
+                      'mb-3',
+                      'text-blue-800'
+                    ])}>
+                      Daily Prompt
+                    </h2>
+                    <p className={tw([ 'text-xl', 'italic', 'text-purple-700', 'font-medium', 'leading-relaxed' ])}>
+  &quot;{dailyPrompt}&quot;
+</p>
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-full sm:before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full sm:after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800 hover:dark:bg-opacity-30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50 text-balance`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+                  </div>
+                  <MoodLogger mood={mood} setMood={setMood} />
+                  <div className={tw(['mb-4'])}>
+                    <label className={tw(['block', 'text-lg', 'font-medium'])}>Title</label>
+                    <input
+                      type="text"
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      className={tw(['w-full', 'p-2', 'border', 'rounded-md', 'border-gray-300'])}
+                      placeholder="Entry title"
+                    />
+                  </div>
+                  <div className={tw(['mb-4'])}>
+                    <label className={tw(['block', 'text-lg', 'font-medium'])}>Content</label>
+                    <textarea
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      className={tw(['w-full', 'p-2', 'border', 'rounded-md', 'border-gray-300'])}
+                      rows="10"
+                      placeholder="Write your entry here..."
+                    ></textarea>
+                  </div>
+                  <div className={tw(['flex', 'justify-between'])}>
+                    <button
+                      type="submit"
+                      className={tw([
+                        'bg-blue-500',
+                        'text-white',
+                        'px-4',
+                        'py-2',
+                        'rounded-md',
+                        'hover:bg-blue-600'
+                      ])}
+                    >
+                      {editingEntry ? 'Save Changes' : 'Add Entry'}
+                    </button>
+                    {editingEntry && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteEntry}
+                        className={tw([
+                          'bg-red-500',
+                          'text-white',
+                          'px-4',
+                          'py-2',
+                          'rounded-md',
+                          'hover:bg-red-600'
+                        ])}
+                      >
+                        Delete Entry
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
+            </div>
+          </main>
+        </div>
+      )}
+    </div>
   );
-}
+};
+
+export default Home;
